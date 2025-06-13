@@ -1,80 +1,58 @@
-// Конфигурация
-const CACHE_VERSION = 'v4';
-const STATIC_CACHE = `static-${CACHE_VERSION}`;
-const DYNAMIC_CACHE = `dynamic-${CACHE_VERSION}`;
+// Должно быть true в production
+var doCache = true;
 
-// Критически важные ресурсы (замените на свои URL)
-const CORE_ASSETS = [
-  '/',
-  '/page123456', // Главная страница Tilda
-  'https://rollpeace.ru/css/main.css',
-  'https://cdn.tildacdn.com/js/tilda-scripts.min.js',
-  '/offline.html' // Fallback страница
-];
+// Имя кэша
+var CACHE_NAME = 'my-pwa-cache-v2';
 
-// Установка
-self.addEventListener('install', event => {
-  console.log('[SW] Установка');
-  event.waitUntil(
-    caches.open(STATIC_CACHE)
-      .then(cache => cache.addAll(CORE_ASSETS))
-});
-
-// Активация
+// Очищает старый кэш
 self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(keys => {
-      return Promise.all(keys
-        .filter(key => key !== STATIC_CACHE && key !== DYNAMIC_CACHE)
-        .map(key => caches.delete(key))
-    })
-  );
+   const cacheWhitelist = [CACHE_NAME];
+   event.waitUntil(
+       caches.keys()
+           .then(keyList =>
+               Promise.all(keyList.map(key => {
+                   if (!cacheWhitelist.includes(key)) {
+                       console.log('Deleting cache: ' + key)
+                       return caches.delete(key);
+                   }
+               }))
+           )
+   );
 });
 
-// Стратегия кэширования для Tilda
-self.addEventListener('fetch', event => {
-  // Исключения для Tilda
-  if (event.request.url.includes('tilda.ws') || 
-      event.request.url.includes('/form/') ||
-      event.request.method !== 'GET') {
-    return fetch(event.request);
-  }
-
-  // Для HTML-страниц: Network First
-  if (event.request.mode === 'navigate') {
-    event.respondWith(
-      fetch(event.request)
-        .then(networkResponse => {
-          cacheDynamic(DYNAMIC_CACHE, event.request, networkResponse.clone());
-          return networkResponse;
-        })
-        .catch(() => caches.match(event.request)
-          .then(cached => cached || caches.match('/offline.html')))
-    );
-    return;
-  }
-
-  // Для статики: Cache First
-  event.respondWith(
-    caches.match(event.request)
-      .then(cached => cached || fetch(event.request)
-        .then(networkResponse => {
-          if (isCacheable(event.request)) {
-            cacheDynamic(DYNAMIC_CACHE, event.request, networkResponse.clone());
-          }
-          return networkResponse;
-        }))
-  );
+// 'install' вызывается, как только пользователь впервые открывает PWA 
+self.addEventListener('install', function(event) {
+   if (doCache) {
+       event.waitUntil(
+           caches.open(CACHE_NAME)
+               .then(function(cache) {
+                   // Получаем данные из манифеста (они кэшируются)
+                   fetch('/static/reader/manifest.json')
+                       .then(response => {
+                           response.json()
+                       })
+                       .then(assets => {
+                       // Открываем и кэшируем нужные страницы и файлы
+                           const urlsToCache = [
+                               '/app/',
+                ........
+                               '/static/core/logo.svg*',
+                           ]
+                           cache.addAll(urlsToCache)
+                           console.log('cached');
+                       })
+               })
+       );
+   }
 });
 
-// Вспомогательные функции
-function cacheDynamic(cacheName, request, response) {
-  if (response.ok) {
-    caches.open(cacheName).then(cache => cache.put(request, response));
-  }
-}
-
-function isCacheable(request) {
-  return request.url.includes('tildacdn.com') || 
-         request.url.startsWith('https://rollpeace.ru/static/');
-}
+// Когда приложение запущено, сервис-воркер перехватывает запросы и отвечает на них данными из кэша, если они есть
+self.addEventListener('fetch', function(event) {
+   if (doCache) {
+       event.respondWith(
+           caches.match(event.request).then(function(response) {
+               return response || fetch(event.request);
+           })
+       );
+   }
+});
